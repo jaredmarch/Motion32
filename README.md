@@ -1,5 +1,7 @@
 # Motion32 — Ableton Live 12 Remote Script
 
+THIS IS AN AI GENERATED REVERSE ENGINEER OF THE FENDER MOTION 32 BEHAVIOR IN STUDIO PRO. USE AT YOUR OWN RISK. 
+
 Native-mode integration for the Fender Motion 32 on the **`Motion 32 Main`** port.
 DAW Mode must be **Off** — the device's separate Control/MCU port is intentionally unused.
 
