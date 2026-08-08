@@ -1,0 +1,62 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Third-party material — present on disk, deliberately never tracked.
+#
+# Everything in this block is copyrighted by Fender, PreSonus or Ableton and
+# is used locally as reference for interoperability work. None of it is ours
+# to redistribute, so none of it enters git history.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Ableton Live's own decompiled framework (.pyc trees)
+Resources/control_surface/
+Resources/v2/
+
+# PreSonus Studio Pro integration assets (JS, surface XML, skins, artwork)
+Resources/From Studio Pro/
+
+# PreSonus Universal Control binaries + Motion 32 firmware image
+Resources/From Universal Control/
+
+# Firmware itself, and the Ghidra databases that embed it.
+# The written analysis (*.md) IS tracked — that's our own documentation.
+Resources/FirmwareAnalysis/ghidra_project/
+Resources/FirmwareAnalysis/*.bin
+Resources/FirmwareAnalysis/*.log
+
+# Fender manuals — link to Fender's download page instead of redistributing
+Resources/*.pdf
+
+# Third-party remote scripts of unknown license
+Resources/*.zip
+
+# Upstream skill repo, vendored as a git clone. Link, don't embed.
+Resources/AbletonLOM/
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build artefacts and OS cruft
+# ─────────────────────────────────────────────────────────────────────────────
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
+
+*.bak
+*.swp
+*~
+
+.vscode/
+.idea/
+.venv/
+venv/
+*.code-workspace
