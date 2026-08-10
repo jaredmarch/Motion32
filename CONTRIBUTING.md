@@ -23,10 +23,12 @@ Then:
 bash run-tests.sh
 ```
 
-A full green run is **3,999 assertions across 169 groups, zero failures**. Without the two pieces
-above you get 3,933 assertions and 4 failures, and those failures are correct — a guard that cannot
-run is reported as a failure rather than skipped. See §6b-13 in the implementation notes for why:
-an earlier version reported "0 failures" while silently checking nothing.
+A full green run is **4,147 assertions across 170 groups, zero failures**. Without the two pieces
+above you get roughly 66 fewer assertions and 4 failures, and those failures are correct — a guard
+that cannot run is reported as a failure rather than skipped. See §6b-13 in the implementation
+notes for why: an earlier version reported "0 failures" while silently checking nothing.
+
+The count is expected to rise as guards are added. If it *drops*, something stopped running.
 
 ## Making a change
 
