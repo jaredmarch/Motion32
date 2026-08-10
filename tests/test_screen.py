@@ -8224,7 +8224,11 @@ def test_the_sends_grid_is_tracks_by_sends():
         check(top[1] != bottom[1], "…and they must be different sends")
 
     # **The invariant the packing rule buys**: every page fully mapped, every pair reachable once.
-    for send_count in range(1, 9):
+    #
+    # ⚠️ **Through twelve, not eight.** The shipped v3 `ChannelStripComponent` allocates twelve
+    # send controls, so nine returns is an ordinary set. Stopping at eight is what let the
+    # `page_label` IndexError survive — the geometry was never exercised past H.
+    for send_count in range(1, 13):
         table = build(send_count)
         every = [slot for page in table for slot in slots_for(page, send_count)]
         check_equal(
@@ -8245,6 +8249,62 @@ def test_the_sends_grid_is_tracks_by_sends():
     check_equal(len(build(3)), 3, "three sends pack into three pages, not four")
     check_equal(len(build(4)), 4, "four sends are four full pages")
     check_equal(build(0), (), "a set with no return tracks has no Sends page")
+
+
+def test_every_send_has_a_label_and_none_of_them_raise():
+    """🐛 **Nine return tracks raised `IndexError` and froze the Sends page.**
+
+    `SEND_LETTERS` was eight characters. `slot_label` guarded the lookup and fell back to a
+    number, but `page_label` indexed the string raw — so a set with nine returns labelled its
+    *tiles* correctly and then blew up building the page *title*. The screen layer catches that
+    higher up, so it never surfaced as an error: the page simply stopped updating and left stale
+    text on the device, which is the failure mode this suite exists to catch.
+
+    🔑 **Two callers, one rule.** The fix is a single `send_label()` both of them use. This guard
+    executes it for real rather than asserting on its source, so putting the bug back fails here.
+
+    **Twelve is not arbitrary** — the shipped v3 `ChannelStripComponent` allocates twelve send
+    controls, so A-L is the range Live itself works in. Past L the label is the 1-based number:
+    unfamiliar, but never an exception.
+    """
+    label = _exec_module_function("sends.py", "send_label")
+    check(label is not None, "sends.py must expose send_label at module level")
+    if label is None:
+        return
+
+    import ast
+
+    constants = {
+        t.id: n.value.value
+        for n in ast.parse(open(os.path.join(SCRIPT_DIR, "sends.py"), encoding="utf-8").read()).body
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+        for t in n.targets
+        if isinstance(t, ast.Name)
+    }
+    label.__globals__.update(constants)
+
+    check_equal(
+        constants.get("SEND_LETTERS"), "ABCDEFGHIJKL",
+        "the framework allocates twelve send controls, so the letters must reach L",
+    )
+
+    check_equal(label(0), "A", "send 0 is A")
+    check_equal(label(7), "H", "send 7 is H — the old end of the string")
+    check_equal(label(8), "I", "send 8 is I — this is the index that used to raise")
+    check_equal(label(11), "L", "send 11 is L, the twelfth and last letter")
+
+    # Past the letters, a number rather than an exception.
+    check_equal(label(12), "13", "beyond L the label is the 1-based number")
+    check_equal(label(99), "100", "an absurd return count still labels rather than raises")
+
+    # **The point of the guard**: no index reachable from any set can raise.
+    for index in range(0, 128):
+        try:
+            text = label(index)
+        except Exception as error:
+            check(False, f"send_label({index}) raised {type(error).__name__} — it must never raise")
+            break
+        check(bool(text), f"send_label({index}) returned an empty label")
 
 
 def test_a_parameter_mapper_releases_when_disabled():

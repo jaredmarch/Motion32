@@ -62,7 +62,33 @@ MAX_SENDS_PER_PAGE = 2
 RING_TRACKS = 8
 
 #: Send letters, matching Live's own naming of the return tracks.
-SEND_LETTERS = "ABCDEFGH"
+#:
+#: **Twelve, not eight.** The shipped v3 `ChannelStripComponent` allocates twelve send controls,
+#: so a set with nine returns is an ordinary configuration rather than an edge case.
+SEND_LETTERS = "ABCDEFGHIJKL"
+
+
+def send_label(index: int) -> str:
+    """The name of send `index` — `"A"`…`"L"`, then a plain number.
+
+    🔑 **One helper, because the two callers disagreed.** `slot_label` guarded the lookup and fell
+    back to a number; `page_label` indexed `SEND_LETTERS` raw. A set with nine returns therefore
+    labelled its tiles correctly and raised `IndexError` building the page title — and because the
+    screen layer catches that further up, the symptom was not an error but a page that quietly
+    stopped updating and left stale text on the device. Two copies of one rule will eventually
+    disagree; this is that same lesson as `page_table`.
+
+    **No index can raise.** Beyond L the label is the 1-based number, which is unambiguous and
+    keeps the failure mode "unfamiliar label" rather than "dead page".
+
+    ⚠️ **Module level and self-contained on purpose**, exactly like `page_table` and `page_slots`:
+    `sends.py` imports the framework, so the offline suite cannot import it, but it *can* lift a
+    top-level function out of the AST and execute it. A guard that re-implemented this rule would
+    test its own arithmetic and nothing else.
+    """
+    if 0 <= index < len(SEND_LETTERS):
+        return SEND_LETTERS[index]
+    return str(index + 1)
 
 
 def page_table(send_count: int):
@@ -319,8 +345,7 @@ class MotionSendsComponent(Component):
             name = str(track.name or "")
         except (AttributeError, RuntimeError):
             name = ""
-        letter = SEND_LETTERS[send_index] if send_index < len(SEND_LETTERS) else str(send_index + 1)
-        return f"{name} {letter}".strip()
+        return f"{name} {send_label(send_index)}".strip()
 
     def slot_parameter(self, index: int):
         """The Live parameter on encoder `index`, for the arc and the value readout."""
@@ -340,9 +365,9 @@ class MotionSendsComponent(Component):
         first_track, first_send, rows = page
         last_send = min(first_send + rows, self.send_count) - 1
         letters = (
-            SEND_LETTERS[first_send]
+            send_label(first_send)
             if last_send == first_send
-            else f"{SEND_LETTERS[first_send]}-{SEND_LETTERS[last_send]}"
+            else f"{send_label(first_send)}-{send_label(last_send)}"
         )
         last_track = min(first_track + ENCODER_COUNT // rows, RING_TRACKS)
         return f"Send {letters} · {first_track + 1}-{last_track}"

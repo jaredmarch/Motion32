@@ -4,7 +4,7 @@
 #
 #   bash run-tests.sh
 #
-# A green run is 3,999 assertions across 169 groups. Anything less than "every guard ran"
+# A green run is 4,147 assertions across 170 groups. Anything less than "every guard ran"
 # is a failure, not a pass — see §6b-13: an unrunnable guard used to report success.
 
 set -uo pipefail
