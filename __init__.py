@@ -30,7 +30,8 @@ from .display import MainView, MixerView, ParamsView, ScreenModel
 from .notification import NotificationView
 from .elements import Elements
 from .keyboard import MotionKeyboardComponent
-from .leds import EncoderLeds, PadLeds
+from .leds import EncoderLeds, PadLeds, StripLeds
+from .strips import TouchStripLeds
 from .mappings import create_mappings
 from .menu import MenuView
 from .mixpages import MotionMixPagesComponent
@@ -186,6 +187,18 @@ class Motion32(ControlSurface):
         # The 32 pads. Note-addressed (0x90 / 0x91-0x93), unlike every other LED group on
         # this device — see leds.py. Ours only while no component binds the pads.
         self._pad_leds = PadLeds(send=self._motion_protocol.send)
+
+        # Touch-strip bars. Strip 2 fills from the bottom and holds on release, per the manual;
+        # strip 1 gets a group so its rest state can be driven, but no position — declaring its
+        # pitch bend would consume it, and its bend into the armed instrument is what works today.
+        self._strip_leds_1 = StripLeds(
+            send=self._motion_protocol.send, addresses=midi.CC_TOUCHSTRIP_1_LEDS
+        )
+        self._strip_leds_2 = StripLeds(
+            send=self._motion_protocol.send, addresses=midi.CC_TOUCHSTRIP_2_LEDS
+        )
+        self._strip1_bar = TouchStripLeds(self._strip_leds_1, fill_from_bottom=False)
+        self._strip2_bar = TouchStripLeds(self._strip_leds_2, fill_from_bottom=True)
         self._wheel_led.set_suspended(True)
         self._encoder_leds.set_suspended(True)
         self._pad_leds.set_suspended(True)
@@ -255,6 +268,8 @@ class Motion32(ControlSurface):
             self._bind_screen_sources(modes)
         if modes is None:
             logger.warning("Motion32: Main_Modes not found; the screen will stay on the device view")
+
+        self._install_strip2_probe()
 
         logger.info("Motion32: script setup complete")
         logger.info(
@@ -487,6 +502,110 @@ class Motion32(ControlSurface):
         if self._midi_muted:
             return True
         return super()._send_midi(*a, **k)
+
+    # -- Strip 2 consumption probe -- TEMPORARY -----------------------------
+    #
+    # Remove this whole block once the hardware question is answered. It exists to make the
+    # test *observable*: Log.txt tells us whether the script received the pitch bend, which is
+    # a different question from whether the instrument still bends. We need both answers to
+    # know which of the three outcomes we are in — see `Motion32_Pads_Banking_and_Strips.md`
+    # §5.3b and the strip-2 issue.
+    #
+    # Bounded, for the reason §6b-6 gives: instrumentation has to survive the traffic it is
+    # meant to observe. A strip slide is a dense 14-bit stream and an uncapped log would bury
+    # everything else in Log.txt within a second.
+    MAX_LOGGED_STRIP_EVENTS = 40
+
+    def _install_strip2_probe(self):
+        self._strip2_events = 0
+        element = None
+        try:
+            element = getattr(self.elements, "touch_strip_2", None)
+        except Exception:
+            logger.exception("Motion32 strip2 probe: could not reach the elements collection")
+        if element is None:
+            logger.warning(
+                "Motion32 strip2 probe: no 'touch_strip_2' element — the declaration in "
+                "elements.py did not take. Check Log.txt above for an element-creation error."
+            )
+            return
+        # Forwarding is now set in `elements.py` at construction time — assigning it here, after
+        # the first `build_midi_map`, is what left strip 2 consumed-but-silent on the first run.
+        # A rebuild is still requested explicitly, because the property's own `_request_rebuild`
+        # is only as good as the callable the element was constructed with.
+        try:
+            self.request_rebuild_midi_map()
+        except Exception:
+            logger.exception("Motion32 strip2 probe: could not request a MIDI map rebuild")
+        try:
+            element.add_value_listener(self._on_strip2_value, identify_sender=False)
+        except Exception:
+            logger.exception("Motion32 strip2 probe: could not attach the value listener")
+            return
+        # The contact sensors. CC 0x7B is All Notes Off to Live, so these also confirm whether
+        # declaring them stopped that.
+        for name, bar in (
+            ("touch_strip_1_button", self._strip1_bar),
+            ("touch_strip_2_button", self._strip2_bar),
+        ):
+            button = getattr(self.elements, name, None)
+            if button is None:
+                logger.warning("Motion32 strip2 probe: no '%s' element", name)
+                continue
+            try:
+                button.add_value_listener(
+                    lambda value, n=name, b=bar: self._on_strip_touch(n, b, value),
+                    identify_sender=False,
+                )
+            except Exception:
+                logger.exception("Motion32 strip2 probe: could not listen to %s", name)
+        for channel in range(2, 17):
+            name = f"touch_strip_2_button_channel_{channel}"
+            button = getattr(self.elements, name, None)
+            if button is None:
+                logger.warning("Motion32 strip2 probe: no '%s' element", name)
+                continue
+            try:
+                button.add_value_listener(
+                    lambda value, n=name: self._on_strip_touch(n, self._strip2_bar, value),
+                    identify_sender=False,
+                )
+            except Exception:
+                logger.exception("Motion32 strip2 probe: could not listen to %s", name)
+
+        logger.info(
+            "Motion32 strip2 probe: ARMED — element=%s, channel=%s, forwarding=%s. "
+            "Slide strip 2 and watch for 'strip2 rx' lines; touch it and watch for "
+            "'touch_strip_2_button' or 'touch_strip_2_button_channel_N' lines.",
+            type(element).__name__,
+            getattr(element, "message_channel", lambda: "?")(),
+            getattr(element, "script_forwarding", "?"),
+        )
+
+    def _on_strip2_value(self, value):
+        # Drive the bar first — the log is instrumentation, the LED is the feature.
+        try:
+            self._strip2_bar.set_position(int(value))
+            self._strip_leds_2.flush()
+        except Exception:
+            logger.exception("Motion32: strip 2 LED update failed")
+        if self._strip2_events >= self.MAX_LOGGED_STRIP_EVENTS:
+            return
+        self._strip2_events += 1
+        if self._strip2_events == self.MAX_LOGGED_STRIP_EVENTS:
+            logger.info("Motion32 strip2 rx: %s  (log cap reached, further events silent)", value)
+        else:
+            logger.info("Motion32 strip2 rx: %s", value)
+
+    def _on_strip_touch(self, name, bar, value):
+        """Contact opened or closed. `127` = finger down, `0` = up (§5.2)."""
+        down = bool(value)
+        try:
+            bar.set_touched(down)
+            (self._strip_leds_1 if bar is self._strip1_bar else self._strip_leds_2).flush()
+        except Exception:
+            logger.exception("Motion32: strip touch handling failed for %s", name)
+        logger.info("Motion32 %s: %s (%s)", name, value, "down" if down else "up")
 
     def receive_midi(self, midi_bytes):
         """Handle the Motion's own SysEx; pass everything else to the framework.

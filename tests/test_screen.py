@@ -8307,6 +8307,80 @@ def test_every_send_has_a_label_and_none_of_them_raise():
         check(bool(text), f"send_label({index}) returned an empty label")
 
 
+def test_the_strip_led_index_is_the_factory_mapping():
+    """🔑 **`round((count - 1) * normalized)`, not truncation** — `Pads_Banking_and_Strips` §5.4.
+
+    The difference only shows at the ends and at the halfway points, which is exactly where a
+    misplaced LED is visible: truncating puts the lit LED a step below the finger for most of the
+    strip and never lights the top one at all. So the guard pins a value where `round` and `int`
+    disagree rather than only checking the endpoints.
+
+    ⚠️ **This executes `strips.led_index` for real.** `strips.py` is importable offline, but the
+    rule is kept module level and self-contained — like `sends.page_table` — so the suite runs the
+    shipped arithmetic instead of a copy of it. A guard that re-derives the formula tests its own
+    formula, which is the §5 failure this suite exists to avoid.
+
+    Hardware, 2026-08-10: position arrives as a 14-bit pitch bend whose low four bits are always
+    zero, so the real input is ~10-bit in a 14-bit field. The mapping still has to cover the full
+    `0…16383` range, because nothing guarantees that stays true across firmware versions.
+    """
+    index_for = _exec_module_function("strips.py", "led_index")
+    check(index_for is not None, "strips.py must expose led_index at module level")
+    if index_for is None:
+        return
+
+    import ast
+
+    constants = {
+        t.id: n.value.value
+        for n in ast.parse(open(os.path.join(SCRIPT_DIR, "strips.py"), encoding="utf-8").read()).body
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Constant)
+        for t in n.targets
+        if isinstance(t, ast.Name)
+    }
+    index_for.__globals__.update(constants)
+
+    count = constants.get("LED_COUNT")
+    top = constants.get("POSITION_MAX")
+    check_equal(count, 9, "nine LEDs per strip — CC 0x37-0x3F and 0x70-0x78")
+    check_equal(top, 16383, "pitch bend is 14-bit, so the position field tops out at 16383")
+    if count is None or top is None:
+        return
+
+    check_equal(index_for(0), 0, "rest at the bottom lights LED 0")
+    check_equal(index_for(top), count - 1, "full travel must reach the LAST LED, not one short")
+    check_equal(index_for(top // 2), (count - 1) // 2, "centre position lights the centre LED")
+
+    # **The discriminator.** 8 * 1024 / 16383 = 0.50003 — `round` gives 1, truncation gives 0.
+    # Putting the bug back (int() instead of round()) fails here and nowhere else.
+    check_equal(
+        index_for(1024), 1,
+        "just past the half-step must round UP — truncating here is the classic off-by-one that "
+        "leaves the lit LED trailing the finger",
+    )
+
+    # Out-of-range input is clamped, never raised: the strip is a real-time control and an
+    # exception in the position path would take the whole render down mid-slide.
+    check_equal(index_for(-1), 0, "a negative position clamps to the bottom")
+    check_equal(index_for(top * 2), count - 1, "an over-range position clamps to the top")
+
+    previous = -1
+    for value in range(0, top + 1, 7):
+        try:
+            got = index_for(value)
+        except Exception as error:
+            check(False, f"led_index({value}) raised {type(error).__name__} — it must never raise")
+            break
+        if not 0 <= got <= count - 1:
+            check(False, f"led_index({value}) = {got}, outside 0..{count - 1}")
+            break
+        if got < previous:
+            check(False, f"led_index went backwards at {value}: {previous} -> {got}")
+            break
+        previous = got
+    check_equal(previous, count - 1, "sweeping the whole range must finish on the top LED")
+
+
 def test_a_parameter_mapper_releases_when_disabled():
     """🐛 **Plugin mode stopped binding its device after a visit to the Sends page.**
 

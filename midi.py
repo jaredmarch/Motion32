@@ -84,6 +84,16 @@ CC_LAUNCH = 0x45
 CC_TOUCHSTRIP_1_BUTTON = 0x7A
 CC_TOUCHSTRIP_2_BUTTON = 0x7B
 
+# Touch-strip **position** is pitch bend, one strip per channel, zero-based —
+# `Motion32_Pads_Banking_and_Strips.md` §5.2, confirmed by the 2026-07-27 capture
+# (MIDI Monitor shows strip 2 as "Pitch Wheel channel 2", i.e. zero-based 1).
+#
+# ⚠️ These are NOT `MIDI_CHANNEL`. Every other control on this device is on channel 0;
+# the strips are the documented exception, and strip 2 being on its own channel is the
+# whole reason it can be addressed separately from strip 1.
+TOUCHSTRIP_1_CHANNEL = 0
+TOUCHSTRIP_2_CHANNEL = 1
+
 # Touch-strip LEDs, 9 per strip. Colour-only addresses — the Studio Pro shutdown capture
 # resets these on channels 2/3/4 with no channel-1 state byte.
 CC_TOUCHSTRIP_1_LEDS = tuple(range(0x37, 0x40))  # 0x37-0x3F
