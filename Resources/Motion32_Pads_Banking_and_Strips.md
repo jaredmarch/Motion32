@@ -484,6 +484,49 @@ mapped parameter.
 > engine takeover together. If the parameter moves and the log stays empty, pick one; prefer
 > forwarding, because the LED bar is what makes the strip feel like the factory.
 
+### ✅ RUN, 2026-08-10 — the answers
+
+**1. Declaring a pitch-bend element CONSUMES it.** Strip 2 stopped reaching the armed instrument
+the moment it was declared. The two-pitch-benders defect is fixed, and it is fixable in the script
+rather than structurally.
+
+This was not predictable from the source. `_install_forwarding` passes `should_consume_event` to
+`forward_midi_cc` as a fifth argument but calls `forward_midi_pitchbend` with three and no flag
+(`CALL 5` versus `CALL 3` in the bytecode), so the script cannot *request* consumption. Live
+consumes forwarded pitch bend **inherently**. Only hardware could have told us.
+
+**2. Forwarding must be installed at construction, not in `setup()`.** The first attempt produced a
+strip that was consumed *and* silent — no values reached the listener. Cause: `script_forwarding` is
+a property whose setter calls `_request_rebuild`, and `setup()` runs after the first
+`build_midi_map`. Assigning it in `elements.py` during construction fixed it immediately.
+
+**3. `script_forwarding` is not a constructor kwarg.** `InputControlElement.__init__` names exactly
+`msg_type, channel, identifier, sysex_identifier, request_rebuild_midi_map,
+send_should_depend_on_forwarding, is_feedback_enabled`. Anything else falls through `**k` to
+`object.__init__` and the script fails to load with `TypeError: object.__init__() takes exactly one
+argument`. Cost one failed load.
+
+**4. The signal is ~10-bit, confirmed.** Every value in the capture is a multiple of 16 — `11040`,
+`10656`, `9792`, `576`, `12976`. §5.1c was right.
+
+**5. 🐛 The contact sensor cannot be consumed, and it stops notes.** CC `0x7B` is **CC 123, All
+Notes Off**. We have never received one event from that element, while strip 1's sensor (CC `0x7A`
+= 122) forwards cleanly and the wheel push (CC 120) has always worked — so Live is special-casing
+All Notes Off upstream of script forwarding. `ScriptForwarding.exclusive` does not help. MIDI
+Monitor shows it plainly:
+>
+> ```
+> From Motion 32 Main  Control 1  All Notes Off  0
+> ```
+>
+> The LED bar does not need it — position onset is enough to know the finger arrived.
+
+**6. The trade-off this creates.** Because declaring consumes, **reading a strip's position and
+letting it play the instrument are mutually exclusive**. Strip 1 therefore gets no LED bar; its
+working pitch bend is worth more. Untested: whether `non_consuming` behaves differently for pitch
+bend. The bytecode says it cannot, since neither type reaches Live for PB, but it is five minutes to
+confirm.
+
 Two further notes:
 
 - `script_wants_forwarding` returns true for `exclusive`/`non_consuming` **or** when

@@ -2,9 +2,10 @@
 
 > ⚠️ **Read this before installing.** This script was written largely by AI, working from a
 > reverse-engineering of how PreSonus Studio Pro drives the Motion 32. It sends **undocumented
-> SysEx to your hardware** and has [known open bugs](https://github.com/jaredmarch/Motion32/issues),
-> including an active input defect on touch strip 2. It is not affiliated with, endorsed by or
-> supported by Fender or PreSonus. Use at your own risk.
+> SysEx to your hardware** and has [known open bugs](https://github.com/jaredmarch/Motion32/issues).
+> One is worth knowing before you play: **touching touch strip 2 stops any held notes**, because its
+> contact sensor is CC 123 (All Notes Off) and Live acts on that before the script can. It is not
+> affiliated with, endorsed by or supported by Fender or PreSonus. Use at your own risk.
 
 Native-mode integration for the Fender Motion 32 on the **`Motion 32 Main`** port.
 DAW Mode must be **Off** — the device's separate Control/MCU port is intentionally unused.
@@ -652,13 +653,19 @@ Two architectural rules hold the screen together, both from the roadmap:
 ## Tests
 
 ```
-pip install xdis          # a prerequisite, not an optional extra — see below
-python3 tests/test_screen.py
+pip3 install xdis --break-system-packages    # a prerequisite, not an optional extra
+bash run-tests.sh
 ```
 
 Runs without Live or hardware — the modules it covers import nothing from the framework.
-**169 test groups, 3999 assertions**, ending in a `PASSED` or `FAILED` line. The checks that earn
-their keep:
+**171 test groups, 4157 assertions**, ending in a `Green` or `Failures above` line.
+
+Use `run-tests.sh` rather than invoking the test file directly: it checks the two prerequisites
+first, and it enforces the group and assertion counts as floors. "0 failures" alone does not show
+that anything ran — see `CONTRIBUTING.md`. A clean clone, lacking `Resources/control_surface/` and
+`xdis`, reports 4,070 assertions and 2 failures; that is the correct result, not a broken checkout.
+
+The checks that earn their keep:
 
 - **skin coverage, both halves** — every skin *namespace* a bound component asks for must exist
   (derived from the framework `.pyc`, so it needs no maintenance), and every LED-bearing control we
@@ -901,9 +908,37 @@ firmware from your own PreSonus Universal Control installation and re-run the pr
 one every documented address belongs to. Its image base is 0, so many questions can be answered by
 reading the `.bin` directly in Python rather than opening Ghidra at all.
 
+## Touch strips (partial, 2026-08-10)
+
+**Strip 2 is declared, consumed, and drives its LED bar.** Strip 1 is untouched.
+
+Position arrives as pitch bend — strip 1 on channel 0, strip 2 on channel 1 — and the hardware test
+settled the question the framework source could not answer: **declaring a pitch-bend element
+consumes it.** The moment strip 2 was declared it stopped reaching the armed instrument, so the
+two-pitch-benders defect is fixed. `strips.py` maps its 14-bit position onto the nine LEDs with the
+factory's `round((count - 1) * normalized)`, fills from the bottom, and **holds on release** — which
+is what the manual says the mod strip does standalone.
+
+The stream is 14-bit but the signal is ~10-bit: every value observed is a multiple of 16.
+
+⚠️ **The trade-off this creates.** Reading a strip's position and letting it play the instrument are
+**mutually exclusive**, because declaring it consumes it. Strip 1 therefore gets no LED bar — its
+pitch bend into the armed track is worth more. Only `non_consuming` could change that, and the
+bytecode says it will not: `forward_midi_cc` receives `should_consume_event` as a fifth argument
+while `forward_midi_pitchbend` receives three and no flag, so the two forwarding types compile to an
+identical call for pitch bend.
+
+🐛 **Touching strip 2 stops held notes, and the script cannot prevent it.** The contact sensor is
+CC `0x7B` — which is **CC 123, All Notes Off**. Live acts on it upstream of script forwarding: we
+have never received a single event from that element, while strip 1's sensor (CC `0x7A` = 122)
+forwards cleanly and the wheel push (CC 120) has always worked. Declaring it `exclusive` changes
+nothing. This is a collision between Fender's choice of controller number and the MIDI spec, and it
+is not reachable from a Remote Script. The LED bar does not depend on it — position onset is enough.
+
 ## Not yet implemented
 
-**Edit** mode, the **touch strips** (Phase 9), **Chord** mode (Phase 11) and Session mode.
+**Edit** mode, the rest of the **touch strips** (Phase 9 — strip 1's bar, secondaries, takeover),
+**Chord** mode (Phase 11) and Session mode.
 
 The **Shift pad overlay** has six of sixteen slots filled; the rest wait on Session mode (Copy and
 Paste need a clip grid to point at) or on decisions still to take. **Scale mode** is built; its
@@ -917,10 +952,8 @@ what is open.
 > Pads, the playable keyboard, Octave ±, A–H banking, LCD soft buttons, encoder halos and the
 > notification bar **are** implemented — this list said otherwise until 2026-07-29.
 
-⚠️ **The touch strips are not merely absent — strip 2 is actively wrong.** Undeclared, its channel-1
-pitch bend reaches the armed track and fights strip 1, so an instrument gets two pitch benders.
-Declaring strip 2 with `ScriptForwarding.exclusive` fixes it on its own. See
-`Motion32_Pads_Banking_and_Strips.md` §5.3b.
+> ⚠️ This section said the touch strips were absent and strip 2 actively wrong until 2026-08-10.
+> Strip 2 is now declared and its bend consumed — see **Touch strips** above.
 
 ## Licence
 

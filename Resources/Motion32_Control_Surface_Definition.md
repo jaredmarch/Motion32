@@ -112,6 +112,18 @@ Two strips report raw **pitch-bend position**, strip 1 on **channel 0**, strip 2
 > Universal Control's `motion32.devicelayout` names them `touchstrippitch` and `touchstripmod`,
 > confirming strip 1 = pitch / strip 2 = mod as the default identities.
 
+🐛 **The contact sensors are not free to read.** Strip 1's is CC `0x7A` (122) and forwards normally.
+**Strip 2's is CC `0x7B` — which is CC 123, All Notes Off.** Live acts on it before script
+forwarding, so the script never sees it *and* held notes are silenced whenever the strip is touched.
+Confirmed on hardware 2026-08-10; `ScriptForwarding.exclusive` does not help. See
+`Motion32_Pads_Banking_and_Strips.md` §5.3b.
+
+⚠️ **Declaring a strip's position consumes it.** Pitch bend forwarding is consumed by Live
+inherently — `forward_midi_pitchbend` never receives a consumption flag, so `exclusive` and
+`non_consuming` are the same call. Reading a strip for its LED bar and letting it play the armed
+instrument are therefore **mutually exclusive**. Strip 2 is declared (bar works, bend consumed);
+strip 1 is not (bend works, no bar).
+
 ### 2.5 Address overlaps — read this before writing `elements.py`
 Several CCs carry different meanings by **direction**. The framework will happily let you collide these.
 

@@ -50,10 +50,15 @@ class LedGroup:
         addresses: Sequence[int] = midi.CC_ENCODER_HALO,
         status: Sequence[int] = CC_STATUS,
         release_state_repeats: int = 1,
+        sends_state: bool = True,
     ) -> None:
         self._send = send
         self._addresses = tuple(addresses)
         self._status = tuple(status)
+        #: Whether this group writes the channel-1 **state** byte at all. The halos and pads do;
+        #: the touch strips do **not** — §5.4, the shutdown capture shows channels 2/3/4 for the
+        #: strip addresses with no state write. Colour alone drives them.
+        self._sends_state = bool(sends_state)
         #: How many times `release()` writes the state byte. Pads get **two** — the factory's
         #: state and animation handlers both release the same address, and the shutdown capture
         #: shows both writes (`Motion32_Implementation_Notes.md` §5.1).
@@ -124,7 +129,7 @@ class LedGroup:
             # track-change capture: channels 2/3/4 only). Re-sending "on" alongside every
             # colour change is both extra traffic and a needless risk of retriggering the
             # device's own state handling.
-            if previous is None or previous[0] != state:
+            if self._sends_state and (previous is None or previous[0] != state):
                 self._send((state_status, address, state))
                 count += 1
             if previous is None or previous[1] != (red, green, blue):
@@ -153,6 +158,26 @@ class LedGroup:
 
     def pending_count(self) -> int:
         return sum(1 for k, v in self._desired.items() if self._sent.get(k) != v)
+
+
+class StripLeds(LedGroup):
+    """Nine LEDs on one touch strip. CC-addressed and **colour-only**.
+
+    ⚠️ **No state byte** — `sends_state=False`. §5.4: the shutdown capture shows channels 2/3/4 for
+    these addresses with no channel-1 state write, so the factory drives them by colour alone.
+    Confirmed on hardware 2026-08-10: with state enabled, MIDI Monitor showed a `Controller 117 127`
+    on channel 1 alongside the `0 / 52 / 102` colour triple. The bar lit either way, but sending it
+    is a byte Studio Pro never sends, and these addresses do double duty — writing extra bytes to a
+    range that overlaps encoder cap-touch is not a risk worth taking for no benefit.
+
+    ⚠️ **Strip 2's addresses collide with encoder cap-touch on input** (`0x70`-`0x77` are encoder
+    touch device->host, `0x78` is wheel push in). Direction disambiguates and `midi.py` records it,
+    but nothing in the framework will warn you.
+    """
+
+    def __init__(self, send, addresses, **k) -> None:
+        k.setdefault("sends_state", False)
+        super().__init__(send=send, addresses=addresses, status=CC_STATUS, **k)
 
 
 class EncoderLeds(LedGroup):

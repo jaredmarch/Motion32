@@ -13,7 +13,14 @@ if/when the Add button gets wired.
 
 import logging
 
-from ableton.v3.control_surface import MIDI_NOTE_TYPE, ElementsBase, MapMode
+from ableton.v3.control_surface import (
+    MIDI_CC_TYPE,
+    MIDI_NOTE_TYPE,
+    MIDI_PB_TYPE,
+    ElementsBase,
+    MapMode,
+    ScriptForwarding,
+)
 from ableton.v3.control_surface.elements import ButtonElement, EncoderElement
 
 from . import midi
@@ -337,3 +344,97 @@ class Elements(ElementsBase):
             midi.CC_WHEEL_PUSH,
             channel=midi.MIDI_CHANNEL,
         )
+
+        # -- Touch strip 2 -- EXPERIMENT, see the hardware test below ----------
+        #
+        # ⚠️ **This is a test, not the finished Phase 9 strip work.** It exists to answer one
+        # question that cannot be answered by reading code: *does declaring the strip stop its
+        # pitch bend reaching the armed track?*
+        #
+        # Why it cannot be answered statically. `_install_forwarding()` computes
+        # `should_consume_event` and passes it to `Live.MidiMap.forward_midi_cc()` as a fifth
+        # argument — but `forward_midi_pitchbend()` is called with **three** arguments and the
+        # flag is not among them (verified in `control_surface.pyc` bytecode: `CALL 5` versus
+        # `CALL 3`). So `exclusive` and `non_consuming` compile to an identical call for pitch
+        # bend, and the script has no way to *request* consumption. Whether Live consumes a
+        # forwarded pitch bend **inherently** is a property of its C++ side. Only hardware knows.
+        #
+        # Firmware context (`Resources/FirmwareAnalysis/strip_translation_chain.md`): in the
+        # native host state the `8F 00 7F` handshake selects, strip position is hard-coded to
+        # pitch bend — `FUN_10102e84` bypasses the strip assignment record entirely. There is no
+        # table, command or setting that makes strip 2 send anything else. So the device *will*
+        # send this; the only question is whether we can absorb it.
+        #
+        # ⚠️ **Strip 1 is deliberately NOT declared.** Its pitch bend already reaches the armed
+        # instrument correctly and that is the behaviour we want to keep. Touching it risks the
+        # one strip that works.
+        #
+        # `is_feedback_enabled=False` because the strip's LED bar lives at its own CC addresses
+        # (`CC_TOUCHSTRIP_2_LEDS`), not at a pitch-bend address — any feedback write here would
+        # be meaningless at best.
+        # ⚠️ **`script_forwarding` is NOT a constructor kwarg** — this cost a failed script load.
+        # `InputControlElement.__init__` takes exactly `msg_type, channel, identifier,
+        # sysex_identifier, request_rebuild_midi_map, send_should_depend_on_forwarding,
+        # is_feedback_enabled`; anything else falls through `**k` to `object.__init__` and raises
+        # `TypeError: object.__init__() takes exactly one argument`. It is a **property with a
+        # setter** that assigns `_script_forwarding` and calls `_request_rebuild` itself, so it is
+        # assigned after construction — see `_install_strip2_probe` in `__init__.py`.
+        self.add_encoder(
+            0,  # pitch bend carries no CC number; the channel is the whole address
+            "Touch_Strip_2",
+            msg_type=MIDI_PB_TYPE,
+            channel=midi.TOUCHSTRIP_2_CHANNEL,
+            is_feedback_enabled=False,
+        )
+        # ⚠️ **Set forwarding here, not in `setup()`.** The property's setter calls
+        # `_request_rebuild`, which is the `request_rebuild_midi_map` callable handed to the
+        # element at construction — and if that was never wired, the setter silently does
+        # nothing. `setup()` runs *after* the first `build_midi_map`, so a late assignment can
+        # leave the element consuming (Live already claimed the address) while never registering
+        # in `_forwarding_registry`, which is exactly "strip 2 goes dead and the script sees
+        # nothing". Assigning during construction means the first map build already knows.
+        self.touch_strip_2.script_forwarding = ScriptForwarding.exclusive
+
+        # -- Touch-strip contact sensors --------------------------------------
+        #
+        # 🐛 **CC 0x7B is All Notes Off to Live.** Touching strip 2 silences held notes, because
+        # CC 123 is the standard All-Notes-Off controller and Live obeys it. §5.2 records the
+        # collision; this is it happening on hardware. Consuming the CC is the fix, and unlike
+        # pitch bend it is *available*: `forward_midi_cc` takes `should_consume_event` as its
+        # fifth argument, so `exclusive` genuinely stops Live seeing it.
+        #
+        # Input-only elements, for the same reason as the wheel push: these addresses carry the
+        # strip **LED-bar mode** host->device, so any framework feedback write would drive the
+        # LEDs instead of doing nothing. `leds.py` owns that direction.
+        self.add_element(
+            "Touch_Strip_1_Button",
+            create_motion_input_button,
+            midi.CC_TOUCHSTRIP_1_BUTTON,
+            msg_type=MIDI_CC_TYPE,
+            channel=midi.MIDI_CHANNEL,
+        )
+        self.add_element(
+            "Touch_Strip_2_Button",
+            create_motion_input_button,
+            midi.CC_TOUCHSTRIP_2_BUTTON,
+            msg_type=MIDI_CC_TYPE,
+            channel=midi.MIDI_CHANNEL,
+        )
+        self.touch_strip_1_button.script_forwarding = ScriptForwarding.exclusive
+        self.touch_strip_2_button.script_forwarding = ScriptForwarding.exclusive
+
+        # HARDWARE TEST: if Live is not delivering CC 0x7B because our declaration is on the
+        # wrong channel, these catchers should reveal it. MIDI Monitor reports the touch event
+        # as channel 1, so the normal element above should be enough; channels 2-16 are only
+        # here to close the loophole before we blame Live's All Notes Off handling.
+        for channel in range(1, 16):
+            self.add_element(
+                f"Touch_Strip_2_Button_Channel_{channel + 1}",
+                create_motion_input_button,
+                midi.CC_TOUCHSTRIP_2_BUTTON,
+                msg_type=MIDI_CC_TYPE,
+                channel=channel,
+            )
+            getattr(
+                self, f"touch_strip_2_button_channel_{channel + 1}"
+            ).script_forwarding = ScriptForwarding.exclusive
